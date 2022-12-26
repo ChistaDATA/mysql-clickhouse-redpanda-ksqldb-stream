@@ -1,0 +1,100 @@
+version: "3.3"
+services:
+  redpanda:
+    image: vectorized/redpanda
+    hostname: redpanda
+    container_name: chista-redpanda
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp
+      - "1"
+      - --memory
+      - "1G"
+      - --reserve-memory
+      - "0M"
+      - --set 
+      - redpanda.cluster_id=turning-red
+      - --set 
+      - redpanda.enable_idempotence=true
+      - --set 
+      - redpanda.enable_transactions=true
+      - --set 
+      - redpanda.auto_create_topics_enabled=true
+      - --node-id
+      - "0"
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+      - --advertise-kafka-addr
+      - PLAINTEXT://redpanda:29092,OUTSIDE://redpanda:9092
+      - --check=false
+
+  connect:
+    image: debezium/connect
+    container_name: chista-connector
+    depends_on:
+      - redpanda
+    ports:
+      - "8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: "redpanda:9092"
+      GROUP_ID: "1"
+      CONFIG_STORAGE_TOPIC: "inventory.configs"
+      OFFSET_STORAGE_TOPIC: "inventory.offset"
+      STATUS_STORAGE_TOPIC: "inventory.status"
+    volumes:
+     - ./debezium-connector-clickhouse:/kafka/manual
+
+  mysql:
+    image: debezium/example-mysql:1.6
+    container_name: chista-mysql
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_USER: mysqluser
+      MYSQL_PASSWORD: mysqlpw
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.3.0
+    hostname: schema-registry
+    container_name: chista-registry
+    depends_on:
+      - redpanda
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: "redpanda:9092"
+
+  ksqldb-server:
+    image: confluentinc/ksqldb-server:0.27.1
+    hostname: ksqldb-server
+    container_name: chista-ksqldb
+    depends_on:
+      - redpanda
+    ports:
+      - "8088:8088"
+    environment:
+      KSQL_LISTENERS: "http://0.0.0.0:8088"
+      KSQL_BOOTSTRAP_SERVERS: "redpanda:9092"
+      KSQL_KSQL_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+      KSQL_KSQL_LOGGING_PROCESSING_STREAM_AUTO_CREATE: "true"
+      KSQL_KSQL_LOGGING_PROCESSING_TOPIC_AUTO_CREATE: "true"
+      KSQL_KSQL_CONNECT_URL: http://chista-connector:8083
+
+  clickhouse:
+    image: clickhouse/clickhouse-server
+    ports:
+      - "8002:9000"
+      - "9123:8123"
+    ulimits:
+      nproc: 65535
+      nofile:
+        soft: 262144
+        hard: 262144
+
